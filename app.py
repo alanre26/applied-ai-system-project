@@ -4,6 +4,7 @@ from datetime import date
 import streamlit as st
 
 from pawpal_system import Owner, Pet, Scheduler, Task
+from agent import PlanningAgent, accept_changes
 from rag import Retriever, ask_pawpal, load_notes, plan_with_care_notes
 
 # Every retrieval, priority change, and Claude call is written here so runs can be checked later.
@@ -181,73 +182,117 @@ st.divider()
 # --- Schedule --------------------------------------------------------------
 st.subheader("Today's Schedule")
 
-# Remember the click so the schedule stays visible (and updates) when other buttons rerun the script.
-use_notes = st.toggle(
-    "Use care notes",
-    value=True,
-    help="Matches each task to a pet care note. If the note says that kind of task shouldn't be "
-    "skipped (like medication), it's planned at a higher priority. Your saved tasks don't change.",
-)
+PLANNERS = {
+    "AI agent": "Claude adjusts today's plan for your request, then the plan is checked for problems.",
+    "Care notes only": "Care notes raise must-do tasks (like medication), no AI call.",
+    "Basic": "The original PawPal+ scheduler: priority and time only.",
+}
+planner = st.radio("Planner", list(PLANNERS), horizontal=True, captions=list(PLANNERS.values()))
+request = ""
+if planner == "AI agent":
+    request = st.text_area(
+        "Anything different about today? (optional)",
+        placeholder="Vet appointment from 2 to 4pm, and it's supposed to be really hot.",
+    )
 
-if st.button("Generate schedule"):
-    st.session_state.show_schedule = True
 
-if st.session_state.get("show_schedule"):
-    if use_notes:
-        changes = plan_with_care_notes(scheduler, retriever, today)
-        plan = scheduler.plan
-    else:
-        changes = []
-        plan = scheduler.generate_plan(today)
-    # Priority each task was actually planned with (raised by a care note, or what the owner entered).
-    planned_priority = {c.task_id: c.new_priority for c in changes}
+def show_plan(plan_scheduler: Scheduler, planned_priority: dict[int, str]) -> None:
+    """Show conflicts, the plan table, and skipped tasks for a scheduler that already has a plan."""
+    plan = plan_scheduler.plan
+    if not plan and not plan_scheduler.skipped:
+        st.info("No tasks are due today.")
+        return
+    used = sum(t.duration_minutes for t in plan)
+    st.caption(f"{today:%A, %B %d} · {used} of {owner.available_minutes} minutes planned")
 
-    raised = [c for c in changes if c.raised]
-    if raised:
+    # Conflicts go first, so the owner sees them before reading the plan.
+    conflicts = plan_scheduler.detect_conflicts(plan)
+    if conflicts:
+        st.warning(
+            f"**{len(conflicts)} time conflict{'s' if len(conflicts) > 1 else ''} in today's plan.** "
+            "You can't do these at the same time. Change one task's preferred time to fix it.\n\n"
+            + "\n".join(f"- {c}" for c in conflicts)
+        )
+    elif plan:
+        st.success("No time conflicts. Every timed task has its own slot.")
+
+    if plan:
+        st.table([
+            {
+                "Time": f"{t.preferred_time:%H:%M}" if t.preferred_time else "Anytime",
+                "Task": t.title,
+                "Pet": t.pet_name,
+                "Minutes": t.duration_minutes,
+                "Priority": planned_priority.get(t.task_id, t.priority),
+                "Why": plan_scheduler.reasons[t.task_id],
+            }
+            for t in plan
+        ])
+
+    if plan_scheduler.skipped:
         st.info(
-            "**Care notes changed today's plan:**\n\n"
-            + "\n".join(
-                f"- {c.task_title} ({c.pet_name}): {c.old_priority} → **{c.new_priority}**. "
-                f"{c.tip} _(source: {c.source})_"
-                for c in raised
-            )
+            "**Not in today's plan:**\n\n"
+            + "\n".join(f"- {t.title} ({t.pet_name}): {plan_scheduler.reasons[t.task_id]}" for t in plan_scheduler.skipped)
         )
 
-    if not plan and not scheduler.skipped:
-        st.info("No tasks are due today.")
+
+# Remember the click so the schedule stays visible (and updates) when other buttons rerun the script.
+if st.button("Generate schedule"):
+    st.session_state.show_schedule = True
+    if planner == "AI agent":
+        # The agent calls Claude, so it only runs on a click, not on every rerun.
+        with st.spinner("The agent is planning your day..."):
+            st.session_state.agent_result = PlanningAgent(owner, retriever).run(request, today)
+
+if st.session_state.get("show_schedule"):
+    if planner == "AI agent" and "agent_result" in st.session_state:
+        result = st.session_state.agent_result
+        if result.used_ai:
+            st.markdown(f"**Agent:** {result.summary}")
+        else:
+            st.warning(f"The AI agent couldn't run, so this is the standard plan with care notes. {result.summary}")
+        # Time conflicts are already shown by show_plan(), so only list the other problems here.
+        for p in result.problems:
+            if not p.startswith("Time conflict"):
+                st.error(p)
+
+        with st.expander("What the agent did, step by step"):
+            st.code("\n".join(result.steps), language=None)
+
+        show_plan(result.scheduler, {})
+
+        # Human review: nothing is saved to your tasks until you accept.
+        savable = [c for c in result.accepted if c.action != "skip_today"]
+        if savable:
+            st.markdown("**Suggested changes:**\n" + "\n".join(f"- {c.describe()}: {c.reason}" for c in savable))
+            if st.button("Accept changes"):
+                saved = accept_changes(owner, savable)
+                del st.session_state.agent_result
+                st.session_state.show_schedule = False
+                st.session_state.flash = f"Saved {saved} change(s) to your tasks."
+                st.rerun()
+    elif planner == "AI agent":
+        st.info("Click **Generate schedule** to run the agent.")
     else:
-        used = sum(t.duration_minutes for t in plan)
-        st.caption(f"{today:%A, %B %d} · {used} of {owner.available_minutes} minutes planned")
+        if planner == "Care notes only":
+            changes = plan_with_care_notes(scheduler, retriever, today)
+        else:
+            changes = []
+            scheduler.generate_plan(today)
+        # Priority each task was actually planned with (raised by a care note, or what the owner entered).
+        planned_priority = {c.task_id: c.new_priority for c in changes}
 
-        # Conflicts go first, so the owner sees them before reading the plan.
-        conflicts = scheduler.detect_conflicts(plan)
-        if conflicts:
-            st.warning(
-                f"**{len(conflicts)} time conflict{'s' if len(conflicts) > 1 else ''} in today's plan.** "
-                "You can't do these at the same time. Change one task's preferred time to fix it.\n\n"
-                + "\n".join(f"- {c}" for c in conflicts)
-            )
-        elif plan:
-            st.success("No time conflicts. Every timed task has its own slot.")
-
-        if plan:
-            st.table([
-                {
-                    "Time": f"{t.preferred_time:%H:%M}" if t.preferred_time else "Anytime",
-                    "Task": t.title,
-                    "Pet": t.pet_name,
-                    "Minutes": t.duration_minutes,
-                    "Priority": planned_priority.get(t.task_id, t.priority),
-                    "Why": scheduler.reasons[t.task_id],
-                }
-                for t in plan
-            ])
-
-        if scheduler.skipped:
+        raised = [c for c in changes if c.raised]
+        if raised:
             st.info(
-                "**Didn't fit in your time today:**\n\n"
-                + "\n".join(f"- {t.title} ({t.pet_name}): {scheduler.reasons[t.task_id]}" for t in scheduler.skipped)
+                "**Care notes changed today's plan:**\n\n"
+                + "\n".join(
+                    f"- {c.task_title} ({c.pet_name}): {c.old_priority} → **{c.new_priority}**. "
+                    f"{c.tip} _(source: {c.source})_"
+                    for c in raised
+                )
             )
+        show_plan(scheduler, planned_priority)
 
 st.divider()
 

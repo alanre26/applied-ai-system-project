@@ -228,6 +228,62 @@ def plan_with_care_notes(scheduler: Scheduler, retriever: Retriever, today: date
     return changes
 
 
+# --- Calling Claude ---------------------------------------------------------
+
+def call_claude(messages: list[dict], system: str, client=None, output_format: dict | None = None,
+                max_tokens: int = 4000) -> tuple[str, str | None]:
+    """Send one request to Claude and return (text, problem).
+
+    problem is None on success, or a short reason the caller can show the owner when it
+    falls back. Nothing here raises, so a Claude outage never crashes the app.
+    """
+    if client is None:
+        try:
+            import anthropic
+            client = anthropic.Anthropic()
+        except Exception as error:  # SDK missing or broken setup
+            logger.warning("Could not create Claude client: %s", error)
+            return "", "Claude isn't set up"
+
+    try:
+        import anthropic
+        api_errors = (anthropic.APIStatusError, anthropic.APIConnectionError)
+    except ImportError:
+        api_errors = ()
+
+    output_config = {"effort": "low"}
+    if output_format:
+        output_config["format"] = output_format
+
+    try:
+        response = client.beta.messages.create(
+            model=MODEL,
+            max_tokens=max_tokens,
+            system=system,
+            output_config=output_config,
+            # If the main model declines, the API retries on a fallback model in the same call.
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+            messages=messages,
+        )
+    except api_errors as error:
+        logger.error("Claude request failed: %s", error)
+        return "", "the request to Claude failed"
+    except Exception as error:  # e.g. no API key raises before any request is sent
+        logger.error("Claude request could not be sent: %s", error)
+        return "", "Claude isn't set up"
+
+    if response.stop_reason == "refusal":
+        logger.warning("Claude declined the request")
+        return "", "Claude declined to answer"
+
+    text = "".join(b.text for b in response.content if b.type == "text").strip()
+    if not text:
+        logger.warning("Claude returned an empty reply (stop_reason=%s)", response.stop_reason)
+        return "", "Claude returned an empty answer"
+    return text, None
+
+
 # --- Feature 2: answer questions from the notes -----------------------------
 
 def _pet_summary(owner: Owner) -> str:
@@ -279,47 +335,14 @@ def ask_pawpal(question: str, owner: Owner, retriever: Retriever, client=None) -
         )
 
     sources = [r.note.source for r in results]
-    if client is None:
-        try:
-            import anthropic
-            client = anthropic.Anthropic()
-        except Exception as error:  # SDK missing or no credentials configured
-            logger.warning("Could not create Claude client: %s", error)
-            return _fallback_answer(results, "Claude isn't set up")
-
-    try:
-        import anthropic
-        api_errors = (anthropic.APIStatusError, anthropic.APIConnectionError)
-    except ImportError:
-        api_errors = ()
-
-    try:
-        logger.info("Asking %s with notes %s", MODEL, sources)
-        response = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=4000,
-            system=SYSTEM_PROMPT,
-            output_config={"effort": "low"},
-            # If the main model declines, the API retries on a fallback model in the same call.
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-            messages=[{"role": "user", "content": build_prompt(question, owner, results)}],
-        )
-    except api_errors as error:
-        logger.error("Claude request failed: %s", error)
-        return _fallback_answer(results, "the request to Claude failed")
-    except Exception as error:  # e.g. missing API key raises before any request is sent
-        logger.error("Claude request could not be sent: %s", error)
-        return _fallback_answer(results, "Claude isn't set up")
-
-    if response.stop_reason == "refusal":
-        logger.warning("Claude declined the question %r", question)
-        return _fallback_answer(results, "Claude declined to answer")
-
-    text = "".join(b.text for b in response.content if b.type == "text").strip()
-    if not text:
-        logger.warning("Claude returned an empty answer (stop_reason=%s)", response.stop_reason)
-        return _fallback_answer(results, "Claude returned an empty answer")
+    logger.info("Asking %s with notes %s", MODEL, sources)
+    text, problem = call_claude(
+        [{"role": "user", "content": build_prompt(question, owner, results)}],
+        system=SYSTEM_PROMPT,
+        client=client,
+    )
+    if problem:
+        return _fallback_answer(results, problem)
 
     logger.info("Answered %r using %s", question, sources)
     return Answer(text, sources, used_ai=True)
