@@ -1,0 +1,29 @@
+flowchart LR
+    %% PawPal+ AI system architecture: RAG + scheduling agent
+
+    User([Pet Owner]) -->|request| UI[Streamlit UI<br/>app.py]
+
+    subgraph AI["AI Layer"]
+        Agent[Planning Agent]
+        Retriever[Retriever]
+        KB[(Pet Care<br/>Knowledge Base)]
+        Retriever --> KB
+    end
+
+    subgraph Core["Core Logic (pawpal_system.py)"]
+        Scheduler[Scheduler]
+        Data[Owner / Pet / Task]
+        Scheduler --> Data
+    end
+
+    Guard{Guardrails<br/>validate plan}
+
+    UI --> Agent
+    Agent -->|look up care tips| Retriever
+    Agent -->|build schedule| Scheduler
+    Agent --> Guard
+    Guard -->|pass| UI
+    Guard -->|fail: retry| Agent
+
+    Tests[[pytest tests]] -.->|verify| Scheduler
+    Tests -.->|verify| Guard
