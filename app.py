@@ -1,10 +1,28 @@
+import logging
 from datetime import date
 
 import streamlit as st
 
 from pawpal_system import Owner, Pet, Scheduler, Task
+from rag import Retriever, ask_pawpal, load_notes, plan_with_care_notes
+
+# Every retrieval, priority change, and Claude call is written here so runs can be checked later.
+logging.basicConfig(
+    filename="pawpal.log",
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
+
+
+@st.cache_resource
+def get_retriever() -> Retriever:
+    """Load the care notes once instead of on every rerun."""
+    return Retriever(load_notes())
+
+
+retriever = get_retriever()
 
 st.title("🐾 PawPal+")
 st.caption("Plan your pets' care for the day based on your time and each task's priority.")
@@ -164,11 +182,36 @@ st.divider()
 st.subheader("Today's Schedule")
 
 # Remember the click so the schedule stays visible (and updates) when other buttons rerun the script.
+use_notes = st.toggle(
+    "Use care notes",
+    value=True,
+    help="Matches each task to a pet care note. If the note says that kind of task shouldn't be "
+    "skipped (like medication), it's planned at a higher priority. Your saved tasks don't change.",
+)
+
 if st.button("Generate schedule"):
     st.session_state.show_schedule = True
 
 if st.session_state.get("show_schedule"):
-    plan = scheduler.generate_plan(today)
+    if use_notes:
+        changes = plan_with_care_notes(scheduler, retriever, today)
+        plan = scheduler.plan
+    else:
+        changes = []
+        plan = scheduler.generate_plan(today)
+    # Priority each task was actually planned with (raised by a care note, or what the owner entered).
+    planned_priority = {c.task_id: c.new_priority for c in changes}
+
+    raised = [c for c in changes if c.raised]
+    if raised:
+        st.info(
+            "**Care notes changed today's plan:**\n\n"
+            + "\n".join(
+                f"- {c.task_title} ({c.pet_name}): {c.old_priority} → **{c.new_priority}**. "
+                f"{c.tip} _(source: {c.source})_"
+                for c in raised
+            )
+        )
 
     if not plan and not scheduler.skipped:
         st.info("No tasks are due today.")
@@ -194,7 +237,7 @@ if st.session_state.get("show_schedule"):
                     "Task": t.title,
                     "Pet": t.pet_name,
                     "Minutes": t.duration_minutes,
-                    "Priority": t.priority,
+                    "Priority": planned_priority.get(t.task_id, t.priority),
                     "Why": scheduler.reasons[t.task_id],
                 }
                 for t in plan
@@ -205,3 +248,29 @@ if st.session_state.get("show_schedule"):
                 "**Didn't fit in your time today:**\n\n"
                 + "\n".join(f"- {t.title} ({t.pet_name}): {scheduler.reasons[t.task_id]}" for t in scheduler.skipped)
             )
+
+st.divider()
+
+# --- Ask PawPal --------------------------------------------------------------
+st.subheader("Ask PawPal")
+st.caption(
+    "Answers come only from PawPal's pet care notes, with the source listed. "
+    "This isn't a replacement for your vet."
+)
+
+with st.form("ask_pawpal"):
+    question = st.text_input("Your question", placeholder="What should I do if I miss a medication dose?")
+    asked = st.form_submit_button("Ask")
+
+if asked:
+    with st.spinner("Looking through the care notes..."):
+        st.session_state.answer = ask_pawpal(question, owner, retriever)
+
+if "answer" in st.session_state:
+    answer = st.session_state.answer
+    if answer.used_ai:
+        st.markdown(answer.text)
+    else:
+        st.warning(answer.text)
+    if answer.sources:
+        st.caption("Sources: " + ", ".join(answer.sources))
