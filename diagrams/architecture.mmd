@@ -1,29 +1,45 @@
 flowchart LR
     %% PawPal+ AI system architecture: RAG + scheduling agent
+    %% Flow: INPUT -> PROCESS -> OUTPUT, with human and automated checks
 
-    User([Pet Owner]) -->|request| UI[Streamlit UI<br/>app.py]
+    subgraph Input["1. Input"]
+        User([Pet Owner])
+        UI[Streamlit UI<br/>app.py]
+        User -->|pets, tasks, request| UI
+    end
 
-    subgraph AI["AI Layer"]
-        Agent[Planning Agent]
+    subgraph Process["2. Process"]
+        Agent[Planning Agent<br/>plan, act, check]
         Retriever[Retriever]
         KB[(Pet Care<br/>Knowledge Base)]
-        Retriever --> KB
+        Scheduler[Scheduler<br/>pawpal_system.py]
+        Guard{Guardrails<br/>conflicts, time limit,<br/>valid output}
+
+        Agent -->|query| Retriever
+        Retriever -->|search| KB
+        Retriever -->|care tips| Agent
+        Agent -->|adjusted tasks| Scheduler
+        Scheduler -->|draft plan| Guard
+        Guard -->|fail: retry or<br/>rule-based fallback| Agent
     end
 
-    subgraph Core["Core Logic (pawpal_system.py)"]
-        Scheduler[Scheduler]
-        Data[Owner / Pet / Task]
-        Scheduler --> Data
+    subgraph Output["3. Output"]
+        Plan[Daily Plan<br/>with reasons + sources]
     end
-
-    Guard{Guardrails<br/>validate plan}
 
     UI --> Agent
-    Agent -->|look up care tips| Retriever
-    Agent -->|build schedule| Scheduler
-    Agent --> Guard
-    Guard -->|pass| UI
-    Guard -->|fail: retry| Agent
+    Guard -->|pass| Plan
+    Plan --> Review([Human Review:<br/>owner approves or edits])
+    Review -.->|edits| UI
 
-    Tests[[pytest tests]] -.->|verify| Scheduler
+    subgraph Testing["Testing & Evaluation"]
+        Tests[[pytest unit tests<br/>mocked AI]]
+        Eval[[Evaluator script<br/>sample scenarios]]
+    end
+
+    Tests -.->|verify| Scheduler
     Tests -.->|verify| Guard
+    Eval -.->|score plans| Plan
+
+    Log[(Logs)]
+    Agent -.->|each step| Log
