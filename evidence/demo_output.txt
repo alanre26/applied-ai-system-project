@@ -1,0 +1,75 @@
+PawPal+ demo run - Monday, November 23, 2026
+Claude API key found: yes
+Care notes loaded: 10
+
+======================================================================
+  Scenario 1: care notes change the plan (RAG, no AI call)
+======================================================================
+Input: 30 minutes free. Morning walk (25 min, medium), Medication (10 min, low).
+
+-- Basic scheduler (priority only) --
+  Plan (25 of 30 min):
+    Anytime Morning walk  Mochi   25 min  medium
+    Not planned: Medication (Mochi) - skipped: needs 10 min but only 5 min left
+
+-- With care notes --
+  Retrieved medication.md: 'Give meds at the same time every day and never skip or double a dose.'
+  -> Medication raised from low to high
+  Plan (10 of 30 min):
+    Anytime Medication    Mochi   10 min  high
+    Not planned: Morning walk (Mochi) - skipped: needs 25 min but only 20 min left. Care note (dog_exercise.md): Most dogs need at least one solid walk a day, more for young or high-energy breeds.
+
+======================================================================
+  Scenario 2: AI agent plans the day around a request
+======================================================================
+Input request: "I'm out from 5:30 to 6:30pm today, and Luna's breakfast has to wait until after 7:30."
+Tasks: Breakfast 07:00 (Luna), Morning walk 07:30, Medication 08:00 (low), Dinner 18:00, Litter box 18:00 (Luna), Play time anytime. 60 min free.
+
+-- Agent steps --
+  Retrieve: applied care notes to 6 tasks (3 marked must-do)
+  Plan (try 1): Claude suggested 4 change(s)
+  Guard: accepted 4, rejected 0
+  Act: built plan with 5 task(s), 55 of 60 min
+  Check: passed (no conflicts, all must-do tasks planned)
+
+-- Agent summary --
+  I moved Luna's breakfast to after Mochi's morning walk and medication, and moved dinner and the litter box to after you're back at 6:30pm. Play time is skipped today because it doesn't fit in your 60 minutes.
+
+-- Accepted changes --
+  Breakfast (Luna): time -> 08:05: Must come after 7:30. 08:05 is the first free slot after the walk and medication.
+  Dinner (Mochi): time -> 18:30: You're out from 5:30 to 6:30pm, so dinner moves to when you're back.
+  Litter box (Luna): time -> 18:40: Avoids your busy window and no longer clashes with Mochi's dinner.
+  Play time (Luna): skip today: Low priority, and the other tasks already use 55 of your 60 minutes.
+
+  Plan (55 of 60 min):
+    07:30   Morning walk  Mochi   30 min  high
+    08:00   Medication    Mochi    5 min  high
+    08:05   Breakfast     Luna     5 min  high
+    18:30   Dinner        Mochi   10 min  high
+    18:40   Litter box    Luna     5 min  medium
+    Not planned: Play time (Luna) - skipped today by the agent: Low priority, and the other tasks already use 55 of your 60 minutes.
+
+  Problems left: none
+  Owner's saved tasks unchanged until they accept: [('Morning walk', '07:30'), ('Medication', '08:00')] ...
+
+======================================================================
+  Scenario 3: Ask PawPal (answers from the care notes)
+======================================================================
+
+Q: What should I do if I forget to give Mochi his medication?
+Used Claude: True | Sources: medication.md
+A: If you forget Mochi's dose, don't give two doses at once to make up for it. Call your vet and ask what to do [medication.md]. Missing a dose can make some treatments stop working, and for medicines like insulin or seizure meds it can be dangerous, so call your vet promptly [medication.md].
+   
+   To help avoid missed doses, give each dose at the same time every day [medication.md]. If Mochi is on a monthly flea, tick, or heartworm preventative, set a reminder for the same day each month [medication.md]. If he's on antibiotics, finish the full course even if he seems better [medication.md].
+
+Q: Mochi just ate some chocolate. What should I do?
+Used Claude: True | Sources: vet_warning_signs.md
+A: Chocolate is toxic to dogs, so please call your vet or an emergency clinic right now about Mochi [vet_warning_signs.md]. Eating something toxic, including chocolate, is one of the warning signs that needs a vet's help [vet_warning_signs.md].
+   
+   When you call, it may help to say what kind of chocolate Mochi ate, roughly how much, and when. Don't give any medicine or try home treatments unless the vet tells you to.
+   
+   If Mochi has trouble breathing, collapses, or has a seizure, get to an emergency clinic immediately [vet_warning_signs.md].
+
+Q: Who won the World Series this year?
+Used Claude: False | Sources: none
+A: I don't have care notes on that yet, so I'd rather not guess. Your vet is the best person to ask.

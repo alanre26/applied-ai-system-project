@@ -1,7 +1,7 @@
 ---
 title: Walks and exercise for dogs
 species: dog
-keywords: walk, walks, walking, exercise, run, jog, hike, fetch, outside, potty
+keywords: walk, walks, walking, exercise, run, jog, hike, fetch, outside, potty, hot, heat, weather, pavement
 min_priority: medium
 tip: Most dogs need at least one solid walk a day, more for young or high-energy breeds.
 ---

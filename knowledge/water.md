@@ -1,7 +1,7 @@
 ---
 title: Fresh water
 species: all
-keywords: water, bowl, hydration, drink, fountain
+keywords: water, bowl, hydration, drink, fountain, hot, heat, thirsty
 min_priority: high
 tip: Refill water with fresh water every day and wash the bowl often.
 ---

@@ -169,3 +169,16 @@ def test_ask_falls_back_when_claude_refuses(retriever):
 def test_ask_empty_question(retriever):
     answer = ask_pawpal("   ", make_owner(), retriever, client=FakeClient())
     assert not answer.used_ai
+
+
+def test_one_shared_everyday_word_is_not_a_match(retriever):
+    """'this year' used to match the vet note ('once a year') and let an off-topic question reach Claude."""
+    assert retriever.search("Who won the World Series this year?") == []
+    client = FakeClient()
+    answer = ask_pawpal("Who won the World Series this year?", make_owner(), retriever, client=client)
+    assert not answer.used_ai and client.requests == []
+
+
+def test_weak_matches_are_not_sent_as_context(retriever):
+    results = retriever.search("What should I do if I forget to give Mochi his medication?", species="dog")
+    assert [r.note.source for r in results] == ["medication.md"]

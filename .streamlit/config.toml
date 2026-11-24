@@ -1,0 +1,8 @@
+# A calm, neutral theme so the app looks clean and professional.
+[theme]
+base = "light"
+primaryColor = "#2E6B5E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F5F4"
+textColor = "#1F2933"
+font = "sans serif"

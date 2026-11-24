@@ -19,6 +19,7 @@ logger = logging.getLogger("pawpal.rag")
 
 KNOWLEDGE_DIR = Path(__file__).parent / "knowledge"
 MODEL = "claude-opus-5-5"
+MIN_SCORE = 3   # lowest score a note needs to count as a match when no tagged keyword matched
 
 # Common words that would match almost every note, so they're ignored when scoring.
 STOP_WORDS = {
@@ -145,7 +146,9 @@ class Retriever:
                 + 2 * len(query_words & _words(note.title))
                 + len(query_words & _words(note.body))
             )
-            if score > 0:
+            # Relevance cutoff: one shared everyday word (like "year") isn't enough. A note needs
+            # a tagged keyword hit or a few word matches, otherwise it's left out as noise.
+            if keyword_hits > 0 or score >= MIN_SCORE:
                 results.append(SearchResult(note, score, keyword_hits))
 
         results.sort(key=lambda r: (-r.score, r.note.source))
