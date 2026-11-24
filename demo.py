@@ -117,8 +117,9 @@ def scenario_agent(retriever: Retriever) -> None:
     say()
     print_plan(result.scheduler)
     say(f"\n  Problems left: {result.problems or 'none'}")
-    say(f"  Owner's saved tasks unchanged until they accept: "
-        f"{[(t.title, f'{t.preferred_time:%H:%M}' if t.preferred_time else 'Anytime') for t in owner.get_all_tasks()][:2]} ...")
+    saved = {t.title: f"{t.preferred_time:%H:%M}" for t in owner.get_all_tasks() if t.preferred_time}
+    say(f"  Owner's saved tasks after the run: Dinner {saved['Dinner']}, Litter box {saved['Litter box']}, "
+        f"Breakfast {saved['Breakfast']} (unchanged until the owner clicks Accept)")
 
 
 def scenario_ask(retriever: Retriever) -> None:

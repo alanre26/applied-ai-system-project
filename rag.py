@@ -333,7 +333,8 @@ def ask_pawpal(question: str, owner: Owner, retriever: Retriever, client=None) -
     if not results:
         logger.info("No notes for question %r; not calling the model", question)
         return Answer(
-            "I don't have care notes on that yet, so I'd rather not guess. Your vet is the best person to ask.",
+            "I can only answer pet care questions that PawPal's care notes cover, and I don't have notes on "
+            "that, so I'd rather not guess. For anything about your pet's health, your vet is the best person to ask.",
             [], used_ai=False,
         )
 
